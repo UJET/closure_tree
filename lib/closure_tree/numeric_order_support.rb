@@ -14,18 +14,13 @@ module ClosureTree
 
     module MysqlAdapter
       def reorder_with_parent_id(parent_id, minimum_sort_order_value = nil)
-        min_where = if minimum_sort_order_value
-          "AND #{quoted_order_column} >= #{minimum_sort_order_value}"
-        else
-          ""
-        end
         connection.execute 'SET @i = 0'
-        connection.execute <<-SQL.strip_heredoc
-          UPDATE #{quoted_table_name}
-            SET #{quoted_order_column} = (@i := @i + 1) + #{minimum_sort_order_value.to_i - 1}
-          WHERE #{where_eq(parent_column_name, parent_id)} #{min_where}
-          ORDER BY #{nulls_last_order_by}
-        SQL
+        query = model_class.where(parent_column_name => parent_id)
+        if minimum_sort_order_value
+          query = query.where("#{quoted_order_column} >= ?", minimum_sort_order_value)
+        end
+        query = query.order(nulls_last_order_by)
+        query.update_all("#{quoted_order_column} = (@i := @i + 1) + #{minimum_sort_order_value.to_i - 1}")
       end
     end
 
