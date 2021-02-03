@@ -72,6 +72,42 @@ shared_examples_for Tag do
         expect(tag_class.leaves).to eq([@tag])
       end
 
+      it 'should not be found by passing find_by_path an array of blank strings' do
+        expect(tag_class.find_by_path([''])).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path an empty array' do
+        expect(tag_class.find_by_path([])).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path nil' do
+        expect(tag_class.find_by_path(nil)).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path an empty string' do
+        expect(tag_class.find_by_path('')).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path an array of nils' do
+        expect(tag_class.find_by_path([nil])).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path an array with an additional blank string' do
+        expect(tag_class.find_by_path([@tag.name, ''])).to be_nil
+      end
+
+      it 'should not be found by passing find_by_path an array with an additional nil' do
+        expect(tag_class.find_by_path([@tag.name, nil])).to be_nil
+      end
+
+      it 'should be found by passing find_by_path an array with its name' do
+        expect(tag_class.find_by_path([@tag.name])).to eq @tag
+      end
+
+      it 'should be found by passing find_by_path its name' do
+        expect(tag_class.find_by_path(@tag.name)).to eq @tag
+      end
+
       context 'with child' do
         before do
           @child = tag_class.create!(name: 'tag 2')
@@ -378,6 +414,126 @@ shared_examples_for Tag do
         expect(a1c).not_to eq(a2c)
         expect(tag_class.where(:name => 'C').to_a).to match_array([a1c, a2c])
         expect(tag_class.with_ancestor(a1c.parent.parent).where(:name => 'C').to_a).to eq([a1c])
+      end
+    end
+
+    context 'with_descendant' do
+      it 'works with no rows' do
+        expect(tag_class.with_descendant.to_a).to be_empty
+      end
+
+      it 'finds only parents' do
+        c = tag_class.find_or_create_by_path %w(A B C)
+        a, b = c.parent.parent, c.parent
+        spurious_tags = tag_class.find_or_create_by_path %w(D E)
+        expect(tag_class.with_descendant(c).to_a).to eq([a, b])
+      end
+
+      it 'limits subsequent where clauses' do
+        ac1 = tag_class.create(name: 'A')
+        ac2 = tag_class.create(name: 'A')
+
+        c1 = tag_class.find_or_create_by_path %w(B C1)
+        ac1.children << c1.parent
+
+        c2 = tag_class.find_or_create_by_path %w(B C2)
+        ac2.children << c2.parent
+
+        # different paths!
+        expect(ac1).not_to eq(ac2)
+        expect(tag_class.where(:name => 'A').to_a).to match_array([ac1, ac2])
+        expect(tag_class.with_descendant(c1).where(:name => 'A').to_a).to eq([ac1])
+      end
+    end
+
+    context 'lowest_common_ancestor' do
+      let!(:t1) { tag_class.create!(name: 't1') }
+      let!(:t11) { tag_class.create!(name: 't11', parent: t1) }
+      let!(:t111) { tag_class.create!(name: 't111', parent: t11) }
+      let!(:t112) { tag_class.create!(name: 't112', parent: t11) }
+      let!(:t12) { tag_class.create!(name: 't12', parent: t1) }
+      let!(:t121) { tag_class.create!(name: 't121', parent: t12) }
+      let!(:t2) { tag_class.create!(name: 't2') }
+      let!(:t21) { tag_class.create!(name: 't21', parent: t2) }
+      let!(:t211) { tag_class.create!(name: 't211', parent: t21) }
+
+      it 'finds the parent for siblings' do
+        expect(tag_class.lowest_common_ancestor(t112, t111)).to eq t11
+        expect(tag_class.lowest_common_ancestor(t12, t11)).to eq t1
+
+        expect(tag_class.lowest_common_ancestor([t112, t111])).to eq t11
+        expect(tag_class.lowest_common_ancestor([t12, t11])).to eq t1
+
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t112', 't111']))).to eq t11
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t12', 't11']))).to eq t1
+      end
+
+      it 'finds the grandparent for cousins' do
+        expect(tag_class.lowest_common_ancestor(t112, t111, t121)).to eq t1
+        expect(tag_class.lowest_common_ancestor([t112, t111, t121])).to eq t1
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t112', 't111', 't121']))).to eq t1
+      end
+
+      it 'finds the parent/grandparent for aunt-uncle/niece-nephew' do
+        expect(tag_class.lowest_common_ancestor(t12, t112)).to eq t1
+        expect(tag_class.lowest_common_ancestor([t12, t112])).to eq t1
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t12', 't112']))).to eq t1
+      end
+
+      it 'finds the self/parent for parent/child' do
+        expect(tag_class.lowest_common_ancestor(t12, t121)).to eq t12
+        expect(tag_class.lowest_common_ancestor(t1, t12)).to eq t1
+
+        expect(tag_class.lowest_common_ancestor([t12, t121])).to eq t12
+        expect(tag_class.lowest_common_ancestor([t1, t12])).to eq t1
+
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t12', 't121']))).to eq t12
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t1', 't12']))).to eq t1
+      end
+
+      it 'finds the self/grandparent for grandparent/grandchild' do
+        expect(tag_class.lowest_common_ancestor(t211, t2)).to eq t2
+        expect(tag_class.lowest_common_ancestor(t111, t1)).to eq t1
+
+        expect(tag_class.lowest_common_ancestor([t211, t2])).to eq t2
+        expect(tag_class.lowest_common_ancestor([t111, t1])).to eq t1
+
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t211', 't2']))).to eq t2
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t111', 't1']))).to eq t1
+      end
+
+      it 'finds the grandparent for a whole extended family' do
+        expect(tag_class.lowest_common_ancestor(t1, t11, t111, t112, t12, t121)).to eq t1
+        expect(tag_class.lowest_common_ancestor(t2, t21, t211)).to eq t2
+
+        expect(tag_class.lowest_common_ancestor([t1, t11, t111, t112, t12, t121])).to eq t1
+        expect(tag_class.lowest_common_ancestor([t2, t21, t211])).to eq t2
+
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t1', 't11', 't111', 't112', 't12', 't121']))).to eq t1
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t2', 't21', 't211']))).to eq t2
+      end
+
+      it 'is nil for no items' do
+        expect(tag_class.lowest_common_ancestor).to be_nil
+        expect(tag_class.lowest_common_ancestor([])).to be_nil
+        expect(tag_class.lowest_common_ancestor(tag_class.none)).to be_nil
+      end
+
+      it 'is nil if there are no common ancestors' do
+        expect(tag_class.lowest_common_ancestor(t111, t211)).to be_nil
+        expect(tag_class.lowest_common_ancestor([t111, t211])).to be_nil
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: ['t111', 't211']))).to be_nil
+      end
+
+      it 'is itself for single item' do
+        expect(tag_class.lowest_common_ancestor(t111)).to eq t111
+        expect(tag_class.lowest_common_ancestor(t2)).to eq t2
+
+        expect(tag_class.lowest_common_ancestor([t111])).to eq t111
+        expect(tag_class.lowest_common_ancestor([t2])).to eq t2
+
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: 't111'))).to eq t111
+        expect(tag_class.lowest_common_ancestor(tag_class.where(name: 't2'))).to eq t2
       end
     end
 

@@ -1,27 +1,23 @@
 module ClosureTree
   module HashTreeSupport
-    def default_tree_scope(limit_depth = nil)
+    def default_tree_scope(scope, limit_depth = nil)
         # Deepest generation, within limit, for each descendant
         # NOTE: Postgres requires HAVING clauses to always contains aggregate functions (!!)
         having_clause = limit_depth ? "HAVING MAX(generations) <= #{limit_depth - 1}" : ''
-        generation_depth = <<-SQL.strip_heredoc
+        generation_depth = <<-SQL.squish
           INNER JOIN (
             SELECT descendant_id, MAX(generations) as depth
             FROM #{quoted_hierarchy_table_name}
             GROUP BY descendant_id
             #{having_clause}
-          ) AS generation_depth
+          ) #{ t_alias_keyword } generation_depth
             ON #{quoted_table_name}.#{model_class.primary_key} = generation_depth.descendant_id
         SQL
-        scope_with_order(model_class.joins(generation_depth), 'generation_depth.depth')
-      end
+        scope_with_order(scope.joins(generation_depth), 'generation_depth.depth')
+    end
 
     def hash_tree(tree_scope, limit_depth = nil)
-      limited_scope = if tree_scope
-        limit_depth ? tree_scope.where("#{quoted_hierarchy_table_name}.generations <= #{limit_depth - 1}") : tree_scope
-      else
-        default_tree_scope(limit_depth)
-      end
+      limited_scope = limit_depth ? tree_scope.where("#{quoted_hierarchy_table_name}.generations <= #{limit_depth - 1}") : tree_scope
       build_hash_tree(limited_scope)
     end
 

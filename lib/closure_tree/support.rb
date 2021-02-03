@@ -22,7 +22,8 @@ module ClosureTree
         :parent_column_name => 'parent_id',
         :dependent => :nullify, # or :destroy or :delete_all -- see the README
         :name_column => 'name',
-        :with_advisory_lock => true
+        :with_advisory_lock => true,
+        :numeric_order => false
       }.merge(options)
       raise ArgumentError, "name_column can't be 'path'" if options[:name_column] == 'path'
       if order_is_numeric?
@@ -31,13 +32,15 @@ module ClosureTree
     end
 
     def hierarchy_class_for_model
-      hierarchy_class = model_class.parent.const_set(short_hierarchy_class_name, Class.new(ActiveRecord::Base))
+      parent_class = ActiveSupport::VERSION::MAJOR >= 6 ? model_class.module_parent : model_class.parent
+      hierarchy_class = parent_class.const_set(short_hierarchy_class_name, Class.new(ActiveRecord::Base))
       use_attr_accessible = use_attr_accessible?
       include_forbidden_attributes_protection = include_forbidden_attributes_protection?
-      hierarchy_class.class_eval <<-RUBY, __FILE__, __LINE__ + 1
+      model_class_name = model_class.to_s
+      hierarchy_class.class_eval do
         include ActiveModel::ForbiddenAttributesProtection if include_forbidden_attributes_protection
-        belongs_to :ancestor, :class_name => "#{model_class}"
-        belongs_to :descendant, :class_name => "#{model_class}"
+        belongs_to :ancestor, class_name: model_class_name
+        belongs_to :descendant, class_name: model_class_name
         attr_accessible :ancestor, :descendant, :generations if use_attr_accessible
         def ==(other)
           self.class == other.class && ancestor_id == other.ancestor_id && descendant_id == other.descendant_id
@@ -46,7 +49,7 @@ module ClosureTree
         def hash
           ancestor_id.hash << 31 ^ descendant_id.hash
         end
-      RUBY
+      end
       hierarchy_class.table_name = hierarchy_table_name
       hierarchy_class
     end
@@ -76,14 +79,21 @@ module ClosureTree
       end
     end
 
-    # lambda-ize the order, but don't apply the default order_option
-    def has_many_without_order_option(opts)
-        [lambda { order(opts[:order]) }, opts.except(:order)]
+    def belongs_to_with_optional_option(opts)
+      ActiveRecord::VERSION::MAJOR < 5 ? opts.except(:optional) : opts
     end
 
-    def has_many_with_order_option(opts)
-      order_options = [opts[:order], order_by].compact
-      [lambda { order(order_options) }, opts.except(:order)]
+    # lambda-ize the order, but don't apply the default order_option
+    def has_many_order_without_option(order_by_opt)
+      [lambda { order(order_by_opt.call) }]
+    end
+
+    def has_many_order_with_option(order_by_opt=nil)
+      order_options = [order_by_opt, order_by].compact
+      [lambda {
+        order_options = order_options.map { |o| o.is_a?(Proc) ? o.call : o }
+        order(order_options)
+      }]
     end
 
     def ids_from(scope)
